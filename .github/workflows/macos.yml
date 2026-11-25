@@ -40,6 +40,9 @@ jobs:
       - name: Assert arm64 runner
         run: test "$(uname -m)" = "arm64"
 
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_26.3.app
+
       - name: Install build dependencies
         run: |
           brew install cmake ninja pkgconf
