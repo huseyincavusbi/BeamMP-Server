@@ -2,10 +2,18 @@ name: Windows
 
 on:
   push:
-    branches:
-      - 'develop'
-      - 'minor'
+    branches: ["**"]
   pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * 1"
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 env:
   VCPKG_DEFAULT_TRIPLET: x64-windows-static
@@ -14,16 +22,16 @@ env:
 
 jobs:
   windows-build:
-    runs-on: windows-latest
+    runs-on: windows-2022
     steps:
       - name: Export GitHub Actions cache environment variables
-        uses: actions/github-script@v6
+        uses: actions/github-script@v7
         with:
           script: |
             core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
 
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
         with:
           submodules: 'recursive'
           fetch-depth: 0
