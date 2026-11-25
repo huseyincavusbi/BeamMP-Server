@@ -15,9 +15,12 @@ on:
         description: "Mark the release as a prerelease"
         type: boolean
         default: true
+  push:
+    tags:
+      - "v*"
 
 concurrency:
-  group: release-${{ inputs.tag }}
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 permissions:
@@ -54,8 +57,8 @@ jobs:
       - name: Create draft release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ inputs.tag }}
-          PRERELEASE: ${{ inputs.prerelease }}
+          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          PRERELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.prerelease || true }}
         run: |
           set -euo pipefail
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
@@ -283,7 +286,7 @@ jobs:
       - name: Upload assets to release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ inputs.tag }}
+          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
           ls -lh release-assets
@@ -291,7 +294,7 @@ jobs:
 
   publish:
     needs: publish-assets
-    if: ${{ inputs.draft == false }}
+    if: ${{ github.event_name == 'push' || inputs.draft == false }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -299,5 +302,5 @@ jobs:
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ inputs.tag }}
+          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
         run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
