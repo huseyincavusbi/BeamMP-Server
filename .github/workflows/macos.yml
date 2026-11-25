@@ -1,0 +1,111 @@
+name: macOS
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * 1"
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.sha }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+  CMAKE_BUILD_TYPE: "Release"
+  CURL_CA_BUNDLE: "/etc/ssl/cert.pem"
+
+jobs:
+  macos-arm64:
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - name: Export GitHub Actions cache environment variables
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: "recursive"
+          fetch-depth: 0
+
+      - name: Assert arm64 runner
+        run: test "$(uname -m)" = "arm64"
+
+      - name: Install build dependencies
+        run: |
+          brew install cmake ninja pkgconf
+
+      - name: Display system information
+        shell: bash
+        run: |
+          {
+            echo "### System information"
+            echo ""
+            echo "| Key | Value |"
+            echo "|---|---|"
+            echo "| Runner | $RUNNER_OS / $RUNNER_ARCH |"
+            echo "| macOS | $(sw_vers -productVersion) ($(sw_vers -buildVersion)) |"
+            echo "| CPU | $(sysctl -n machdep.cpu.brand_string) |"
+            echo "| Cores | $(sysctl -n hw.ncpu) |"
+            echo "| Memory | $(( $(sysctl -n hw.memsize) / 1024 / 1024 / 1024 )) GB |"
+            echo "| Disk free | $(df -h / | awk 'NR==2{print $4}') |"
+            echo "| Xcode | $(xcodebuild -version 2>/dev/null | tr '\n' ' ') |"
+            echo "| Clang | $(clang --version 2>/dev/null | head -1) |"
+            echo "| CMake | $(cmake --version 2>/dev/null | head -1) |"
+            echo "| Ninja | $(ninja --version 2>/dev/null) |"
+            echo "| vcpkg | $(git -C vcpkg rev-parse --short HEAD 2>/dev/null) |"
+            echo ""
+            echo '```'
+            uname -a
+            sw_vers
+            sysctl -n machdep.cpu.brand_string
+            sysctl -n hw.ncpu
+            df -h /
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Bootstrap vcpkg
+        run: ./vcpkg/bootstrap-vcpkg.sh -disableMetrics
+
+      - name: Configure
+        run: |
+          cmake -B build-macos -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="$PWD/vcpkg/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_TARGET_TRIPLET=arm64-osx \
+            -DVCPKG_OVERLAY_PORTS="$PWD/vcpkg-overlays"
+
+      - name: Build server and tests
+        run: cmake --build build-macos --parallel --target BeamMP-Server BeamMP-Server-tests
+
+      - name: Package binary
+        run: |
+          BIN=$(find build-macos -type f -name BeamMP-Server -perm -111 | head -1)
+          test -n "$BIN"
+          cp "$BIN" BeamMP-Server-macos-arm64
+          file BeamMP-Server-macos-arm64
+          shasum -a 256 BeamMP-Server-macos-arm64 | tee BeamMP-Server-macos-arm64.sha256
+
+      - name: Run tests
+        run: |
+          TEST_BIN=$(find build-macos -type f -name BeamMP-Server-tests -perm -111 | head -1)
+          test -n "$TEST_BIN"
+          "$TEST_BIN"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BeamMP-Server-macos-arm64
+          path: |
+            BeamMP-Server-macos-arm64
+            BeamMP-Server-macos-arm64.sha256
+          retention-days: 7
