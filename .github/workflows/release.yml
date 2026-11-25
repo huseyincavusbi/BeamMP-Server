@@ -36,24 +36,6 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Write release notes
-        run: |
-          cat > release-notes.md <<'EOF'
-          Unofficial builds of BeamMP-Server v3.9.4 from the `add-macos-build` branch.
-
-          - macOS: arm64, macOS 15 or newer (Apple Silicon only)
-          - Linux: Debian/Ubuntu x86_64 and arm64 builds
-          - Windows: x64 static build
-
-          macOS notes:
-
-          - Ad-hoc signed; right-click Open or run
-            `xattr -d com.apple.quarantine BeamMP-Server.macos.arm64`.
-          - Set `CURL_CA_BUNDLE` and `SSL_CERT_FILE` to a CA bundle
-            (for example `~/.beammp-ca.pem`) for backend TLS.
-
-          License: AGPL-3.0. No official support.
-          EOF
       - name: Create draft release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -69,7 +51,7 @@ jobs:
           if ! gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" >/dev/null 2>&1; then
             TARGET_ARGS=(--target "$GITHUB_SHA")
           fi
-          ARGS=(--draft --title "$TAG" --notes-file release-notes.md)
+          ARGS=(--draft --title "$TAG" --notes "")
           if [ "$PRERELEASE" = "true" ]; then
             ARGS+=(--prerelease)
           fi
