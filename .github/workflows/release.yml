@@ -1,134 +1,180 @@
-name: Release Create & Build
+name: Release
+
 on:
-  push:
-    # Sequence of patterns matched against refs/tags
-    tags:
-      - "v*" # Push events to matching v*, i.e. v1.0, v20.15.10
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (for example v3.9.4-port.1)"
+        required: true
+        type: string
+      draft:
+        description: "Keep the release as a draft"
+        type: boolean
+        default: true
+      prerelease:
+        description: "Mark the release as a prerelease"
+        type: boolean
+        default: true
+
+concurrency:
+  group: release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
 
 env:
   VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
   CMAKE_BUILD_TYPE: "Release"
-  DEBIAN_FRONTEND: "noninteractive"
 
 jobs:
   create-release:
     runs-on: ubuntu-latest
-    name: Create Release
-    outputs:
-      upload_url: ${{ steps.create_release.outputs.upload_url }}
+    permissions:
+      contents: write
     steps:
-      - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1
+      - name: Write release notes
+        run: |
+          cat > release-notes.md <<'EOF'
+          Unofficial builds of BeamMP-Server v3.9.4 from the `add-macos-build` branch.
+
+          - macOS: arm64, macOS 15 or newer (Apple Silicon only)
+          - Linux: Debian/Ubuntu x86_64 and arm64 builds
+          - Windows: x64 static build
+
+          macOS notes:
+
+          - Ad-hoc signed; right-click Open or run
+            `xattr -d com.apple.quarantine BeamMP-Server.macos.arm64`.
+          - Set `CURL_CA_BUNDLE` and `SSL_CERT_FILE` to a CA bundle
+            (for example `~/.beammp-ca.pem`) for backend TLS.
+
+          License: AGPL-3.0. No official support.
+          EOF
+      - name: Create draft release
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ github.ref }}
-          release_name: ${{ github.ref }}
-          draft: false
-          prerelease: true
-          body: |
-            Files included in this release are:
-            - `BeamMP-Server.$DISTRO.$DISTROVERSION.$ARCH` for linux builds, for example `BeamMP-Server.debian.11.x86_64` for the Debian 11 build for x86_64. All require `liblua5.3` to be installed.
-            - `BeamMP-Server.exe` for the Windows build (x86_64). You need to install the [Visual C++ Redistributables](https://aka.ms/vs/17/release/vc_redist.x64.exe) to run this.
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG already exists"
+            exit 0
+          fi
+          TARGET_ARGS=()
+          if ! gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" >/dev/null 2>&1; then
+            TARGET_ARGS=(--target "$GITHUB_SHA")
+          fi
+          ARGS=(--draft --title "$TAG" --notes-file release-notes.md)
+          if [ "$PRERELEASE" = "true" ]; then
+            ARGS+=(--prerelease)
+          fi
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" "${TARGET_ARGS[@]}" "${ARGS[@]}"
 
-  x86_64-matrix:
-    runs-on: ubuntu-22.04
+  macos:
     needs: create-release
-    strategy:
-      matrix:
-        include:
-          - distro: debian
-            version: 12
-          - distro: debian
-            version: 13
-          - distro: ubuntu
-            version: 22.04
-          - distro: ubuntu
-            version: 24.04
-    container:
-      image: ${{ matrix.distro }}:${{ matrix.version }}
+    runs-on: macos-26
+    timeout-minutes: 120
     steps:
-      - name: get-cmake
-        uses: lukka/get-cmake@v3.28.1
-
       - name: Export GitHub Actions cache environment variables
-        uses: actions/github-script@v6
+        uses: actions/github-script@v7
         with:
           script: |
             core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
 
-      - name: Install git
-        run: |
-          apt-get update -y
-          apt-get install -y git
-
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
         with:
           submodules: "recursive"
           fetch-depth: 0
 
-      - name: Git config safe directory
+      - name: Display system information
         shell: bash
-        run: bash ./scripts/${{ matrix.distro }}-${{ matrix.version }}/1.5-git-safe.sh
+        run: |
+          {
+            echo "### System information"
+            echo ""
+            echo "| Key | Value |"
+            echo "|---|---|"
+            echo "| Runner | $RUNNER_OS / $RUNNER_ARCH |"
+            echo "| macOS | $(sw_vers -productVersion) ($(sw_vers -buildVersion)) |"
+            echo "| CPU | $(sysctl -n machdep.cpu.brand_string) |"
+            echo "| Cores | $(sysctl -n hw.ncpu) |"
+            echo "| Memory | $(( $(sysctl -n hw.memsize) / 1024 / 1024 / 1024 )) GB |"
+            echo "| Xcode | $(xcodebuild -version 2>/dev/null | tr '\n' ' ') |"
+            echo "| CMake | $(cmake --version 2>/dev/null | head -1) |"
+            echo "| Ninja | $(ninja --version 2>/dev/null) |"
+            echo "| vcpkg | $(git -C vcpkg rev-parse --short HEAD 2>/dev/null) |"
+            echo ""
+            echo '```'
+            uname -a
+            sw_vers
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
 
-      - name: Install Dependencies
-        run: bash ./scripts/${{ matrix.distro }}-${{ matrix.version }}/1-install-deps.sh
+      - name: Install build dependencies
+        run: brew install cmake ninja pkgconf
 
-      - name: Create Build Environment
-        run: bash ./scripts/${{ matrix.distro }}-${{ matrix.version }}/2-configure.sh '-DCMAKE_TOOLCHAIN_FILE=./vcpkg/scripts/buildsystems/vcpkg.cmake'
+      - name: Bootstrap vcpkg
+        run: ./vcpkg/bootstrap-vcpkg.sh -disableMetrics
 
-      - name: Build Server
-        run: bash ./scripts/${{ matrix.distro }}-${{ matrix.version }}/3-build.sh
+      - name: Configure
+        run: |
+          cmake -B build-release -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 \
+            -DCMAKE_TOOLCHAIN_FILE="$PWD/vcpkg/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_TARGET_TRIPLET=arm64-osx \
+            -DVCPKG_OVERLAY_PORTS="$PWD/vcpkg-overlays" \
+            -DBeamMP-Server_ENABLE_UNIT_TESTING=OFF
 
-      - name: Upload Release Asset
-        id: upload-release-asset
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build server
+        run: cmake --build build-release --parallel --target BeamMP-Server
+
+      - name: Package binary
+        run: |
+          BIN=$(find build-release -type f -name BeamMP-Server -perm -111 | head -1)
+          test -n "$BIN"
+          cp "$BIN" BeamMP-Server.macos.arm64
+          file BeamMP-Server.macos.arm64
+          shasum -a 256 BeamMP-Server.macos.arm64 | tee BeamMP-Server.macos.arm64.sha256
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
         with:
-          asset_name: BeamMP-Server.${{ matrix.distro }}.${{ matrix.version }}.x86_64
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: ./bin/BeamMP-Server
-          asset_content_type: application/x-elf
+          name: BeamMP-Server.macos.arm64
+          path: |
+            BeamMP-Server.macos.arm64
+            BeamMP-Server.macos.arm64.sha256
+          retention-days: 7
 
-      - name: Upload Debug Info
-        id: upload-debug-info
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          asset_name: debuginfo.${{ matrix.distro }}.${{ matrix.version }}.x86_64
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: ./bin/BeamMP-Server.debug
-          asset_content_type: application/x-elf
-
-  arm64-matrix:
-    runs-on: ubuntu-22.04-arm
+  linux:
     needs: create-release
     strategy:
+      fail-fast: false
       matrix:
         include:
-          - distro: debian
-            version: 12
-          - distro: debian
-            version: 13
-          - distro: ubuntu
-            version: 22.04
-          - distro: ubuntu
-            version: 24.04
+          - { distro: debian, version: "12", arch: x86_64, runner: ubuntu-22.04, triplet: x64-linux }
+          - { distro: debian, version: "13", arch: x86_64, runner: ubuntu-22.04, triplet: x64-linux }
+          - { distro: ubuntu, version: "22.04", arch: x86_64, runner: ubuntu-22.04, triplet: x64-linux }
+          - { distro: ubuntu, version: "24.04", arch: x86_64, runner: ubuntu-22.04, triplet: x64-linux }
+          - { distro: debian, version: "12", arch: arm64, runner: ubuntu-22.04-arm, triplet: arm64-linux }
+          - { distro: debian, version: "13", arch: arm64, runner: ubuntu-22.04-arm, triplet: arm64-linux }
+          - { distro: ubuntu, version: "22.04", arch: arm64, runner: ubuntu-22.04-arm, triplet: arm64-linux }
+          - { distro: ubuntu, version: "24.04", arch: arm64, runner: ubuntu-22.04-arm, triplet: arm64-linux }
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: ${{ matrix.distro }}:${{ matrix.version }}
+    timeout-minutes: 60
     env:
-      VCPKG_DEFAULT_TRIPLET: "arm64-linux"
-      VCPKG_FORCE_SYSTEM_BINARIES: 1
-    container:
-      image: ${{ matrix.distro }}:${{ matrix.version }}
+      VCPKG_DEFAULT_TRIPLET: ${{ matrix.triplet }}
     steps:
       - name: get-cmake
         uses: lukka/get-cmake@v3.28.1
 
       - name: Export GitHub Actions cache environment variables
-        uses: actions/github-script@v6
+        uses: actions/github-script@v7
         with:
           script: |
             core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
@@ -139,7 +185,7 @@ jobs:
           apt-get update -y
           apt-get install -y git
 
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
         with:
           submodules: "recursive"
           fetch-depth: 0
@@ -152,67 +198,106 @@ jobs:
         run: bash ./scripts/${{ matrix.distro }}-${{ matrix.version }}/1-install-deps.sh
 
       - name: Create Build Environment
-        run: bash ./scripts/${{ matrix.distro }}-${{ matrix.version }}/2-configure.sh '-DCMAKE_TOOLCHAIN_FILE=./vcpkg/scripts/buildsystems/vcpkg.cmake'
+        run: bash ./scripts/${{ matrix.distro }}-${{ matrix.version }}/2-configure.sh '-DCMAKE_TOOLCHAIN_FILE=./vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_OVERLAY_PORTS=./vcpkg-overlays'
 
       - name: Build Server
         run: bash ./scripts/${{ matrix.distro }}-${{ matrix.version }}/3-build.sh
 
-      - name: Upload Release Asset
-        id: upload-release-asset
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          asset_name: BeamMP-Server.${{ matrix.distro }}.${{ matrix.version }}.arm64
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: ./bin/BeamMP-Server
-          asset_content_type: application/x-elf
+      - name: Package binary
+        run: |
+          NAME="BeamMP-Server.linux.${{ matrix.distro }}.${{ matrix.version }}.${{ matrix.arch }}"
+          cp bin/BeamMP-Server "$NAME"
+          sha256sum "$NAME" | tee "$NAME.sha256"
 
-      - name: Upload Debug Info
-        id: upload-debug-info
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@v4
         with:
-          asset_name: debuginfo.${{ matrix.distro }}.${{ matrix.version }}.arm64
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: ./bin/BeamMP-Server.debug
-          asset_content_type: application/x-elf
+          name: BeamMP-Server.linux.${{ matrix.distro }}.${{ matrix.version }}.${{ matrix.arch }}
+          path: |
+            BeamMP-Server.linux.${{ matrix.distro }}.${{ matrix.version }}.${{ matrix.arch }}
+            BeamMP-Server.linux.${{ matrix.distro }}.${{ matrix.version }}.${{ matrix.arch }}.sha256
+          retention-days: 7
 
-  upload-release-files-windows:
-    name: Build and upload Windows Release Files
-    runs-on: windows-latest
+  windows:
     needs: create-release
+    runs-on: windows-2022
+    timeout-minutes: 60
     env:
       VCPKG_DEFAULT_TRIPLET: x64-windows-static
     steps:
       - name: Export GitHub Actions cache environment variables
-        uses: actions/github-script@v6
+        uses: actions/github-script@v7
         with:
           script: |
             core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
 
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
         with:
           submodules: "recursive"
           fetch-depth: 0
 
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          runVcpkgInstall: true
+          vcpkgJsonGlob: 'vcpkg.json'
+
       - name: Create Build Environment
         shell: bash
-        run: ./scripts/windows/1-configure.sh
+        run: ./scripts/windows/1-configure.sh '-DVCPKG_OVERLAY_PORTS=./vcpkg-overlays'
 
       - name: Build Server
         shell: bash
         run: bash ./scripts/windows/2-build.sh
 
-      - name: Upload Release Asset
-        id: upload-release-asset
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Package binary
+        shell: pwsh
+        run: |
+          Copy-Item ./bin/Release/BeamMP-Server.exe ./BeamMP-Server.windows.x64.exe
+          $hash = (Get-FileHash ./BeamMP-Server.windows.x64.exe -Algorithm SHA256).Hash.ToLower()
+          "$hash  BeamMP-Server.windows.x64.exe" |
+            Out-File -Encoding ascii ./BeamMP-Server.windows.x64.exe.sha256
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
         with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: ./bin/Release/BeamMP-Server.exe
-          asset_name: BeamMP-Server.exe
-          asset_content_type: application/vnd.microsoft.portable-executable
+          name: BeamMP-Server.windows.x64
+          path: |
+            BeamMP-Server.windows.x64.exe
+            BeamMP-Server.windows.x64.exe.sha256
+          retention-days: 7
+
+  publish-assets:
+    needs: [macos, linux, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Upload assets to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          ls -lh release-assets
+          gh release upload "$TAG" release-assets/* --repo "$GITHUB_REPOSITORY" --clobber
+
+  publish:
+    needs: publish-assets
+    if: ${{ inputs.draft == false }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
