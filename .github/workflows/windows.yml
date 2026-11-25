@@ -41,6 +41,33 @@ jobs:
         with:
           runVcpkgInstall: true
 
+      - name: Display system information
+        shell: pwsh
+        run: |
+          $os   = Get-CimInstance Win32_OperatingSystem
+          $cpu  = Get-CimInstance Win32_Processor | Select-Object -First 1
+          $disk = Get-PSDrive C
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = if (Test-Path $vswhere) { & $vswhere -latest -products * -property installationVersion } else { "n/a" }
+          $ninja = if (Get-Command ninja -ErrorAction SilentlyContinue) { ninja --version } else { "n/a" }
+          $lines = @(
+            "### System information",
+            "",
+            "| Key | Value |",
+            "|---|---|",
+            "| Runner | $env:RUNNER_OS / $env:RUNNER_ARCH |",
+            "| OS | $($os.Caption) $($os.Version) |",
+            "| CPU | $($cpu.Name.Trim()) |",
+            "| Cores | $($cpu.NumberOfCores) physical / $($cpu.NumberOfLogicalProcessors) logical |",
+            "| Memory | $([math]::Round($os.TotalVisibleMemorySize/1MB,1)) GB |",
+            "| Disk free C: | $([math]::Round($disk.Free/1GB,1)) GB |",
+            "| Visual Studio | $vs |",
+            "| CMake | $((cmake --version | Select-Object -First 1)) |",
+            "| Ninja | $ninja |",
+            "| vcpkg | $(git -C vcpkg rev-parse --short HEAD) |"
+          )
+          $lines | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+
       - name: Create Build Environment
         shell: bash
         run: ./scripts/windows/1-configure.sh

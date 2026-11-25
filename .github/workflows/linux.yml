@@ -66,6 +66,35 @@ jobs:
       - name: Install Dependencies
         run: bash ./scripts/${{ matrix.distro }}-${{ matrix.version }}/1-install-deps.sh
 
+      - name: Display system information
+        shell: bash
+        run: |
+          {
+            echo "### System information"
+            echo ""
+            echo "| Key | Value |"
+            echo "|---|---|"
+            echo "| Runner | $RUNNER_OS / $RUNNER_ARCH |"
+            echo "| Distro | $(. /etc/os-release && echo "$PRETTY_NAME") |"
+            echo "| Kernel | $(uname -r) |"
+            echo "| CPU | $(lscpu | awk -F: '/Model name/{gsub(/^[ \t]+/,"",$2); print $2; exit}') |"
+            echo "| Cores | $(nproc) |"
+            echo "| Memory | $(free -h | awk '/^Mem:/{print $2}') |"
+            echo "| Disk free | $(df -h / | awk 'NR==2{print $4}') |"
+            echo "| CMake | $(cmake --version 2>/dev/null | head -1) |"
+            echo "| Ninja | $(ninja --version 2>/dev/null) |"
+            echo "| GCC | $(gcc --version 2>/dev/null | head -1) |"
+            echo "| Clang | $(clang --version 2>/dev/null | head -1) |"
+            echo "| vcpkg | $(git -C vcpkg rev-parse --short HEAD 2>/dev/null) |"
+            echo ""
+            echo '```'
+            uname -a
+            lscpu | sed -n '1,20p'
+            free -h
+            df -h /
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
       - name: Create Build Environment
         run: bash ./scripts/${{ matrix.distro }}-${{ matrix.version }}/2-configure.sh '-DCMAKE_TOOLCHAIN_FILE=./vcpkg/scripts/buildsystems/vcpkg.cmake'
 
@@ -138,6 +167,35 @@ jobs:
 
       - name: Install Dependencies
         run: bash ./scripts/${{ matrix.distro }}-${{ matrix.version }}/1-install-deps.sh
+
+      - name: Display system information
+        shell: bash
+        run: |
+          {
+            echo "### System information"
+            echo ""
+            echo "| Key | Value |"
+            echo "|---|---|"
+            echo "| Runner | $RUNNER_OS / $RUNNER_ARCH |"
+            echo "| Distro | $(. /etc/os-release && echo "$PRETTY_NAME") |"
+            echo "| Kernel | $(uname -r) |"
+            echo "| CPU | $(lscpu | awk -F: '/Model name/{gsub(/^[ \t]+/,"",$2); print $2; exit}') |"
+            echo "| Cores | $(nproc) |"
+            echo "| Memory | $(free -h | awk '/^Mem:/{print $2}') |"
+            echo "| Disk free | $(df -h / | awk 'NR==2{print $4}') |"
+            echo "| CMake | $(cmake --version 2>/dev/null | head -1) |"
+            echo "| Ninja | $(ninja --version 2>/dev/null) |"
+            echo "| GCC | $(gcc --version 2>/dev/null | head -1) |"
+            echo "| Clang | $(clang --version 2>/dev/null | head -1) |"
+            echo "| vcpkg | $(git -C vcpkg rev-parse --short HEAD 2>/dev/null) |"
+            echo ""
+            echo '```'
+            uname -a
+            lscpu | sed -n '1,20p'
+            free -h
+            df -h /
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Create Build Environment
         run: bash ./scripts/${{ matrix.distro }}-${{ matrix.version }}/2-configure.sh '-DCMAKE_TOOLCHAIN_FILE=./vcpkg/scripts/buildsystems/vcpkg.cmake'
