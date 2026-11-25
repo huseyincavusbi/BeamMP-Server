@@ -71,6 +71,18 @@ static CURL* AcquireCurl() {
     return Curl;
 }
 
+static void ApplyCaBundle(CURL* curl) {
+#if defined(__APPLE__)
+    const char* CaBundle = std::getenv("CURL_CA_BUNDLE");
+    if (CaBundle == nullptr || *CaBundle == '\0') {
+        CaBundle = "/etc/ssl/cert.pem";
+    }
+    if (CaBundle != nullptr && *CaBundle != '\0') {
+        curl_easy_setopt(curl, CURLOPT_CAINFO, CaBundle);
+    }
+#endif
+}
+
 static void ReleaseCurl(CURL* curl) {
     if (!curl) {
         return;
@@ -122,6 +134,7 @@ std::string Http::GET(const std::string& url, unsigned int* status) {
     if (curl) {
         CURLcode res;
         char errbuf[CURL_ERROR_SIZE];
+        ApplyCaBundle(curl);
         curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
         curl_easy_setopt(curl, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4);
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, CurlWriteCallback);
@@ -163,6 +176,7 @@ std::string Http::POST(const std::string& url, const std::string& body, const st
     if (curl) {
         CURLcode res;
         char errbuf[CURL_ERROR_SIZE];
+        ApplyCaBundle(curl);
         curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
         curl_easy_setopt(curl, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4);
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, CurlWriteCallback);
