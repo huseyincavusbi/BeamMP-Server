@@ -106,7 +106,7 @@ set(PRJ_LIBRARIES
     commandline_static
     toml11::toml11
     rapidjson
-    sol2
+    sol2::sol2
     httplib::httplib
     libzip::zip
     OpenSSL::SSL OpenSSL::Crypto

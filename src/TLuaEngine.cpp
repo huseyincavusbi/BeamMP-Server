@@ -629,14 +629,14 @@ sol::table TLuaEngine::StateThreadData::Lua_GetPlayerIdentifiers(int ID) {
     return sol::lua_nil;
 }
 
-std::variant<std::string, sol::nil_t> TLuaEngine::StateThreadData::Lua_GetPlayerRole(int ID) {
+std::variant<std::string, sol::lua_nil_t> TLuaEngine::StateThreadData::Lua_GetPlayerRole(int ID) {
     auto MaybeClient = GetClient(mEngine->Server(), ID);
     if (MaybeClient) {
         if (auto Locked = MaybeClient.value().lock()) {
             return Locked->GetRoles();
         }
     }
-    return sol::nil;
+    return sol::lua_nil;
 }
 
 sol::table TLuaEngine::StateThreadData::Lua_GetPlayers() {
@@ -974,7 +974,7 @@ TLuaEngine::StateThreadData::StateThreadData(const std::string& Name, TLuaStateI
     MPTable.set_function("GetPlayerIdentifiers", [&](int ID) -> sol::table {
         return Lua_GetPlayerIdentifiers(ID);
     });
-    MPTable.set_function("GetPlayerRole", [&](int ID) -> std::variant<std::string, sol::nil_t> {
+    MPTable.set_function("GetPlayerRole", [&](int ID) -> std::variant<std::string, sol::lua_nil_t> {
         return Lua_GetPlayerRole(ID);
     });
     MPTable.set_function("Sleep", &LuaAPI::MP::Sleep);
