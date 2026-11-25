@@ -925,10 +925,13 @@ TEST_CASE("ReadSocketWithTimeout reads large payload") {
 
     constexpr size_t PacketSize = 2 * 1024 * 1024;
     std::vector<uint8_t> Sent(PacketSize, uint8_t(0x7A));
-    boost::asio::write(ClientSocket, boost::asio::buffer(Sent), Ec);
-    REQUIRE(!Ec);
+    std::thread Sender([&] {
+        boost::asio::write(ClientSocket, boost::asio::buffer(Sent), Ec);
+    });
     std::vector<uint8_t> Received(PacketSize);
     const auto ReadEc = ReadSocketWithTimeout(ServerSocket, Received.data(), Received.size(), std::chrono::seconds(2));
+    Sender.join();
+    REQUIRE(!Ec);
 
     CHECK(!ReadEc);
     CHECK(Received == Sent);
